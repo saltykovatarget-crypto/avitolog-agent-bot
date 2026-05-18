@@ -36,10 +36,53 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 console.log("🤖 Bot started. Allowed:", ALLOWED_IDS);
 
 // ─── In-memory хранилище ──────────────────────────────────────────────────────
-const histories  = new Map();
-const ideasStore = new Map();
-const competStore= new Map();
-const stopFlags  = new Set();
+const histories   = new Map();
+const ideasStore  = new Map();
+const competStore = new Map();
+const stopFlags   = new Set();
+const lastResults = new Map(); // chatId → { text, request } для регенерации
+
+// ─── Клавиатуры ───────────────────────────────────────────────────────────────
+const MAIN_KB = {
+  keyboard: [
+    [{ text: "✍️ Пост" },       { text: "🎬 Reels" },       { text: "🔍 SEO статья" }],
+    [{ text: "🕵️ Конкуренты" }, { text: "📰 Мониторинг" },  { text: "💡 Идеи" }],
+    [{ text: "🗓 План недели" }, { text: "💰 Продажи" },     { text: "🎨 Визуал" }],
+    [{ text: "⭐️ Сделай круче" },{ text: "🔨 QA-разбор" },  { text: "🆕 Новый чат" }],
+  ],
+  resize_keyboard: true,
+  persistent: true,
+};
+
+const BUTTON_MAP = {
+  "✍️ Пост":         "напиши пост",
+  "🎬 Reels":         "сценарий reels",
+  "🔍 SEO статья":    "статья дзен",
+  "🕵️ Конкуренты":   "/competitors",
+  "📰 Мониторинг":   "/monitor",
+  "💡 Идеи":         "/ideas",
+  "🗓 План недели":   "план на неделю",
+  "💰 Продажи":      "продающий оффер",
+  "🎨 Визуал":       "обложка баннер",
+  "⭐️ Сделай круче": "сделай круче:",
+  "🔨 QA-разбор":    "сломай:",
+  "🆕 Новый чат":    "/new",
+};
+
+function postActionsKb(chatId) {
+  return {
+    inline_keyboard: [
+      [
+        { text: "↻ Другой вариант", callback_data: `regen_${chatId}` },
+        { text: "🔨 QA-разбор",     callback_data: `qa_${chatId}` },
+      ],
+      [
+        { text: "⭐️ Сделай круче",  callback_data: `chesky_${chatId}` },
+        { text: "💾 Сохранить идею", callback_data: `saveidea_${chatId}` },
+      ],
+    ],
+  };
+}
 
 const DEFAULT_COMPETITORS = [
   { name: "Горбачев",           username: "avitolog_gorbachev" },
@@ -52,9 +95,24 @@ const DEFAULT_COMPETITORS = [
 ];
 
 // ─── Telegram helpers ─────────────────────────────────────────────────────────
-async function send(chatId, text) {
+async function send(chatId, text, extra = {}) {
   const chunks = String(text).match(/[\s\S]{1,4000}/g) || [text];
-  for (const c of chunks) await bot.sendMessage(chatId, c).catch(() => {});
+  for (let i = 0; i < chunks.length; i++) {
+    const opts = i === chunks.length - 1 ? { reply_markup: MAIN_KB, ...extra } : {};
+    await bot.sendMessage(chatId, chunks[i], opts).catch(() => {});
+  }
+}
+
+async function sendResult(chatId, text) {
+  // Сначала шлём текст чанками без разметки
+  const chunks = String(text).match(/[\s\S]{1,4000}/g) || [text];
+  for (let i = 0; i < chunks.length - 1; i++) {
+    await bot.sendMessage(chatId, chunks[i]).catch(() => {});
+  }
+  // Последний чанк — с inline кнопками действий
+  await bot.sendMessage(chatId, chunks[chunks.length - 1], {
+    reply_markup: postActionsKb(chatId),
+  }).catch(() => {});
 }
 
 async function sendWithStop(chatId, text) {
@@ -243,6 +301,9 @@ async function handle(msg) {
 
   let text = msg.text?.trim() || "";
 
+  // Кнопки клавиатуры → маппинг в реальные команды
+  if (BUTTON_MAP[text]) text = BUTTON_MAP[text];
+
   if (msg.voice) {
     if (!process.env.GROQ_API_KEY) { await send(chatId, "🎙 Голосовые не подключены. Напиши текстом."); return; }
     await bot.sendChatAction(chatId, "typing");
@@ -254,7 +315,11 @@ async function handle(msg) {
 
   if (!text) return;
 
-  if (text === "/start")  { clearHistory(chatId); await send(chatId, START); return; }
+  if (text === "/start")  {
+    clearHistory(chatId);
+    await bot.sendMessage(chatId, START, { reply_markup: MAIN_KB }).catch(() => {});
+    return;
+  }
   if (text === "/team")   { await send(chatId, TEAM); return; }
   if (text === "/new")    { clearHistory(chatId); await send(chatId, "🆕 История очищена."); return; }
   if (text === "/myid")   { await send(chatId, `Твой ID: ${chatId}`); return; }
@@ -345,23 +410,77 @@ async function handle(msg) {
       result = await claude(PLAT_SYSTEM, platPrompt(result));
     }
     appendHistory(chatId, text, result);
+    lastResults.set(String(chatId), { text: result, request: text });
     await bot.deleteMessage(chatId, mid).catch(() => {});
-    await send(chatId, result);
+    await sendResult(chatId, result);
   } catch (e) {
     console.error(e.message);
     await editMsg(chatId, mid, "⚠️ Ошибка. Попробуй ещё раз.", true);
   }
 }
 
-// ─── Кнопка стоп ─────────────────────────────────────────────────────────────
+// ─── Callback кнопки ─────────────────────────────────────────────────────────
 bot.on("callback_query", async cb => {
-  if (cb.data?.startsWith("stop_")) {
-    stopFlags.add(Number(cb.data.split("_")[1]));
+  const chatId = cb.message.chat.id;
+  const data   = cb.data || "";
+
+  await bot.answerCallbackQuery(cb.id).catch(() => {});
+
+  // 🛑 Стоп
+  if (data.startsWith("stop_")) {
+    stopFlags.add(Number(data.split("_")[1]));
     await bot.answerCallbackQuery(cb.id, { text: "🛑 Остановлено" }).catch(() => {});
     await bot.editMessageText("🛑 Остановлено", {
-      chat_id: cb.message.chat.id, message_id: cb.message.message_id,
+      chat_id: chatId, message_id: cb.message.message_id,
       reply_markup: { inline_keyboard: [] },
     }).catch(() => {});
+    return;
+  }
+
+  const last = lastResults.get(String(chatId));
+
+  // ↻ Другой вариант
+  if (data.startsWith("regen_") && last) {
+    const mid = await sendWithStop(chatId, "↻ Генерирую другой вариант...");
+    try {
+      const route = detectRoute(last.request);
+      const agent = AGENTS[route.agents[0]];
+      const result = await claude(agent.systemPrompt, last.request, getHistory(chatId));
+      lastResults.set(String(chatId), { text: result, request: last.request });
+      await bot.deleteMessage(chatId, mid).catch(() => {});
+      await sendResult(chatId, result);
+    } catch { await editMsg(chatId, mid, "⚠️ Ошибка. Попробуй ещё раз.", true); }
+    return;
+  }
+
+  // 🔨 QA-разбор
+  if (data.startsWith("qa_") && last) {
+    const mid = await sendWithStop(chatId, "🔨 Adversarial ломает текст...");
+    try {
+      const result = await claude(AGENTS.adversarial.systemPrompt, last.text);
+      await bot.deleteMessage(chatId, mid).catch(() => {});
+      await sendResult(chatId, result);
+    } catch { await editMsg(chatId, mid, "⚠️ Ошибка.", true); }
+    return;
+  }
+
+  // ⭐️ Сделай круче
+  if (data.startsWith("chesky_") && last) {
+    const mid = await sendWithStop(chatId, "⭐️ Chesky ищет 10-звёздную версию...");
+    try {
+      const result = await claude(AGENTS.chesky.systemPrompt, last.text);
+      await bot.deleteMessage(chatId, mid).catch(() => {});
+      await sendResult(chatId, result);
+    } catch { await editMsg(chatId, mid, "⚠️ Ошибка.", true); }
+    return;
+  }
+
+  // 💾 Сохранить идею
+  if (data.startsWith("saveidea_") && last) {
+    const snippet = last.request.slice(0, 120);
+    saveIdea(chatId, snippet);
+    await bot.sendMessage(chatId, `💾 Сохранила: ${snippet}\n\n/ideas — все заметки`, { reply_markup: MAIN_KB }).catch(() => {});
+    return;
   }
 });
 
