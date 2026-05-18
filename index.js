@@ -2,7 +2,7 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const Anthropic   = require("@anthropic-ai/sdk");
 const { detectRoute } = require("./router");
-const { getContextCases } = require("./cases");
+const { getContextCases, getCaseTemplate, getTenSteps } = require("./cases");
 
 // ─── Агенты ───────────────────────────────────────────────────────────────────
 const AGENTS = {
@@ -405,9 +405,14 @@ async function handle(msg) {
       }
       // Для контентных агентов — добавляем реальные кейсы
       const CASES_AGENTS = ["smm", "editor", "sales", "analyst", "content-director"];
-      const sysPrompt = CASES_AGENTS.includes(route.agents[i])
-        ? agent.systemPrompt + `\n\nРЕАЛЬНЫЕ КЕЙСЫ АГЕНТСТВА FORMULA — используй эти цифры:\n${getContextCases(3)}`
-        : agent.systemPrompt;
+      let sysPrompt = agent.systemPrompt;
+      if (CASES_AGENTS.includes(route.agents[i])) {
+        sysPrompt += `\n\nРЕАЛЬНЫЕ КЕЙСЫ АГЕНТСТВА FORMULA — используй эти цифры:\n${getContextCases(3)}`;
+        // Если просят написать кейс — добавляем шаблон 10 шагов
+        if (/кейс|case/i.test(text)) {
+          sysPrompt += `\n\nШАБЛОН ДЛЯ КЕЙСА — обязательно используй структуру 10 шагов:\n${getCaseTemplate()}\n\nМЕТОДОЛОГИЯ (10 шагов системы FORMULA):\n${getTenSteps()}`;
+        }
+      }
       result = await claude(sysPrompt, userMsg, i === 0 ? history : []);
     }
     if (stopFlags.has(chatId)) { await editMsg(chatId, mid, "🛑 Остановлено", true); return; }
