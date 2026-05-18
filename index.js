@@ -507,15 +507,14 @@ async function handle(msg) {
         const saved = (await getIdeas(chatId)).slice(0,10).map((x,n)=>`${n+1}. ${x.text}`).join("\n");
         userMsg = `Мои идеи:\n${saved||"Нет."}\n\nЗапрос: ${text}`;
       }
-      // Для контентных агентов — добавляем реальные кейсы
-      const CASES_AGENTS = ["smm", "editor", "sales", "analyst", "content-director"];
+      // Кейсы инжектируем ТОЛЬКО когда явно просят кейс
       let sysPrompt = agent.systemPrompt;
-      if (CASES_AGENTS.includes(route.agents[i])) {
-        sysPrompt += `\n\nРЕАЛЬНЫЕ КЕЙСЫ АГЕНТСТВА FORMULA — используй эти цифры:\n${getContextCases(3)}`;
-        // Если просят написать кейс — добавляем шаблон 10 шагов
-        if (/кейс|case/i.test(text)) {
-          sysPrompt += `\n\nШАБЛОН ДЛЯ КЕЙСА — обязательно используй структуру 10 шагов:\n${getCaseTemplate()}\n\nМЕТОДОЛОГИЯ (10 шагов системы FORMULA):\n${getTenSteps()}`;
-        }
+      if (/кейс|case/i.test(text) && ["smm", "case-writer"].includes(route.agents[i])) {
+        sysPrompt += `\n\nШАБЛОН КЕЙСА — структура 10 шагов:\n${getCaseTemplate()}\n\nМЕТОДОЛОГИЯ:\n${getTenSteps()}`;
+      }
+      // Для продажника — контекст сервиса
+      if (route.agents[i] === "sales") {
+        sysPrompt += `\n\nКОНТЕКСТ: AI Авитолог PRO работает, можно приглашать тестировать. 3 запроса бесплатно на aiavitologpro.ru`;
       }
       result = await claude(sysPrompt, userMsg, i === 0 ? history : []);
     }
