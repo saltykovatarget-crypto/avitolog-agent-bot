@@ -227,89 +227,22 @@ async function appendHistory(id, u, a) {
 }
 
 // ─── Генератор баннеров (sharp) ───────────────────────────────────────────────
-const sharp = require("sharp");
-
-function wrapLines(text, maxChars = 24) {
-  const words = text.split(" ");
-  const lines = [];
-  let line = "";
-  for (const w of words) {
-    if ((line + w).length > maxChars && line) { lines.push(line.trim()); line = w + " "; }
-    else line += w + " ";
-  }
-  if (line.trim()) lines.push(line.trim());
-  return lines;
-}
-
-function escapeXml(s) {
-  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
-
-async function createBanner(headline, subtitle = "", width = 1280, height = 720) {
-  const headLines = wrapLines(headline, Math.floor(width / 52));
-  const lineH = Math.min(96, Math.floor((height * 0.55) / Math.max(headLines.length, 1)));
-  const startY = Math.floor((height - headLines.length * lineH - (subtitle ? 60 : 0)) / 2);
-  const fontSize = Math.max(44, Math.min(88, lineH - 8));
-
-  const headSvg = headLines.map((l, i) =>
-    `<text x="${width/2}" y="${startY + i * lineH}"
-      text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold"
-      font-size="${fontSize}" fill="white">${escapeXml(l)}</text>`
-  ).join("\n");
-
-  const subSvg = subtitle
-    ? `<text x="${width/2}" y="${startY + headLines.length * lineH + 10}"
-        text-anchor="middle" font-family="Arial,sans-serif" font-size="34"
-        fill="rgba(255,255,255,0.82)">${escapeXml(subtitle)}</text>`
-    : "";
-
-  // Декоративные волны
-  const wave1 = `<ellipse cx="${width*0.1}" cy="${height*0.15}" rx="${width*0.35}" ry="${height*0.22}"
-    fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>`;
-  const wave2 = `<ellipse cx="${width*0.9}" cy="${height*0.85}" rx="${width*0.3}" ry="${height*0.2}"
-    fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="2"/>`;
-
-  const signSvg = `<text x="${width - 50}" y="${height - 35}"
-    text-anchor="end" font-family="Arial,sans-serif" font-style="italic"
-    font-size="26" fill="rgba(255,255,255,0.70)">AI Авитолог | Валерия Салтыкова</text>`;
-
-  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    ${wave1}${wave2}
-    ${headSvg}
-    ${subSvg}
-    ${signSvg}
-  </svg>`;
-
-  return await sharp({
-    create: { width, height, channels: 4, background: { r: 139, g: 92, b: 246, alpha: 1 } }
-  })
-  .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
-  .png()
-  .toBuffer();
-}
-
 async function sendBanner(chatId, headline, subtitle = "") {
   try {
     await bot.sendChatAction(chatId, "upload_photo");
-    const buf = await createBanner(headline, subtitle);
-    await bot.sendPhoto(chatId, buf, {
-      caption: `🖼 Баннер готов\n\n*${escapeXml(headline)}*${subtitle ? "\n" + subtitle : ""}`,
+    const prompt = `${headline}${subtitle ? ", " + subtitle : ""}, solid flat purple background #8B5CF6, white bold text, minimalist, professional branding, no gradient`;
+    const encoded = encodeURIComponent(prompt + ", no watermark, no logo");
+    const url = `https://image.pollinations.ai/prompt/${encoded}?width=1280&height=720&model=flux&nologo=true&seed=${Date.now()}`;
+    await bot.sendPhoto(chatId, url, {
+      caption: `🖼 *${headline}*${subtitle ? "\n" + subtitle : ""}\n\nAI Авитолог | Валерия Салтыкова`,
       parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [[
-          { text: "📐 Квадрат 1080×1080", callback_data: `bsq_${chatId}` },
-          { text: "↻ С другим текстом",  callback_data: `bnew_${chatId}` },
-        ]]
-      }
-    });
+      reply_markup: { inline_keyboard: [[{ text: "↻ Другой вариант", callback_data: `bnew_${chatId}` }]] }
+    }).catch(() => send(chatId, `🖼 Баннер: ${url}`));
     lastResults.set(`banner_${chatId}`, { headline, subtitle });
-  } catch (e) {
-    console.error("Banner error:", e.message);
-    await send(chatId, "⚠️ Не удалось создать баннер.");
-  }
+  } catch { await send(chatId, "⚠️ Не удалось создать баннер."); }
 }
 
-// ─── Идеи (с Redis) ───────────────────────────────────────────────────────────
+// ─── Идеи// ─── Идеи (с Redis) ───────────────────────────────────────────────────────────
 async function getIdeas(id) {
   if (USE_REDIS) return (await rGet(`ideas:${id}`)) || [];
   return _ideas.get(String(id)) || [];

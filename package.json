@@ -8,7 +8,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "dotenv": "^16.0.0",
-    "node-telegram-bot-api": "^0.66.0",
-    "sharp": "^0.34.5"
+    "node-telegram-bot-api": "^0.66.0"
   }
 }
