@@ -83,7 +83,8 @@ function postActionsKb(chatId) {
       { text: "💾 Сохранить идею", callback_data: `saveidea_${chatId}` },
     ],
     [
-      { text: "🎨 Картинка к посту", callback_data: `image_${chatId}` },
+      { text: "🎨 Фото-баннер",      callback_data: `image_${chatId}` },
+      { text: "🖼 Текст-баннер",      callback_data: `banner_${chatId}` },
     ],
   ];
   if (process.env.CHANNEL_ID) {
@@ -145,6 +146,22 @@ async function editMsg(chatId, msgId, text, done = false) {
   }).catch(() => {});
 }
 
+// ─── Конвертация Markdown → Telegram формат ───────────────────────────────────
+function toTgMarkdown(text) {
+  return String(text)
+    // **жирный** → *жирный*
+    .replace(/\*\*(.+?)\*\*/g, "*$1*")
+    // ### Заголовок → *Заголовок*
+    .replace(/^#{1,4}\s+(.+)$/gm, "*$1*")
+    // --- разделители → пустая строка
+    .replace(/^---+$/gm, "")
+    // __ курсив __ → _курсив_
+    .replace(/__(.+?)__/g, "_$1_")
+    // убираем лишние пустые строки (3+ → 2)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 // ─── Claude ───────────────────────────────────────────────────────────────────
 async function claude(system, content, history = []) {
   const msg = await anthropic.messages.create({
@@ -167,6 +184,89 @@ function appendHistory(id, u, a) {
   h.push({ role: "assistant", content: String(a).slice(0, 4000) });
   if (h.length > 20) h.splice(0, h.length - 20);
   histories.set(String(id), h);
+}
+
+// ─── Генератор баннеров (sharp) ───────────────────────────────────────────────
+const sharp = require("sharp");
+
+function wrapLines(text, maxChars = 24) {
+  const words = text.split(" ");
+  const lines = [];
+  let line = "";
+  for (const w of words) {
+    if ((line + w).length > maxChars && line) { lines.push(line.trim()); line = w + " "; }
+    else line += w + " ";
+  }
+  if (line.trim()) lines.push(line.trim());
+  return lines;
+}
+
+function escapeXml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+async function createBanner(headline, subtitle = "", width = 1280, height = 720) {
+  const headLines = wrapLines(headline, Math.floor(width / 52));
+  const lineH = Math.min(96, Math.floor((height * 0.55) / Math.max(headLines.length, 1)));
+  const startY = Math.floor((height - headLines.length * lineH - (subtitle ? 60 : 0)) / 2);
+  const fontSize = Math.max(44, Math.min(88, lineH - 8));
+
+  const headSvg = headLines.map((l, i) =>
+    `<text x="${width/2}" y="${startY + i * lineH}"
+      text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold"
+      font-size="${fontSize}" fill="white">${escapeXml(l)}</text>`
+  ).join("\n");
+
+  const subSvg = subtitle
+    ? `<text x="${width/2}" y="${startY + headLines.length * lineH + 10}"
+        text-anchor="middle" font-family="Arial,sans-serif" font-size="34"
+        fill="rgba(255,255,255,0.82)">${escapeXml(subtitle)}</text>`
+    : "";
+
+  // Декоративные волны
+  const wave1 = `<ellipse cx="${width*0.1}" cy="${height*0.15}" rx="${width*0.35}" ry="${height*0.22}"
+    fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>`;
+  const wave2 = `<ellipse cx="${width*0.9}" cy="${height*0.85}" rx="${width*0.3}" ry="${height*0.2}"
+    fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="2"/>`;
+
+  const signSvg = `<text x="${width - 50}" y="${height - 35}"
+    text-anchor="end" font-family="Arial,sans-serif" font-style="italic"
+    font-size="26" fill="rgba(255,255,255,0.70)">AI Авитолог | Валерия Салтыкова</text>`;
+
+  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    ${wave1}${wave2}
+    ${headSvg}
+    ${subSvg}
+    ${signSvg}
+  </svg>`;
+
+  return await sharp({
+    create: { width, height, channels: 4, background: { r: 139, g: 92, b: 246, alpha: 1 } }
+  })
+  .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+  .png()
+  .toBuffer();
+}
+
+async function sendBanner(chatId, headline, subtitle = "") {
+  try {
+    await bot.sendChatAction(chatId, "upload_photo");
+    const buf = await createBanner(headline, subtitle);
+    await bot.sendPhoto(chatId, buf, {
+      caption: `🖼 Баннер готов\n\n*${escapeXml(headline)}*${subtitle ? "\n" + subtitle : ""}`,
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "📐 Квадрат 1080×1080", callback_data: `bsq_${chatId}` },
+          { text: "↻ С другим текстом",  callback_data: `bnew_${chatId}` },
+        ]]
+      }
+    });
+    lastResults.set(`banner_${chatId}`, { headline, subtitle });
+  } catch (e) {
+    console.error("Banner error:", e.message);
+    await send(chatId, "⚠️ Не удалось создать баннер.");
+  }
 }
 
 // ─── Идеи ─────────────────────────────────────────────────────────────────────
@@ -439,6 +539,15 @@ async function handle(msg) {
   const delM = text.match(/^удали конкурента\s+@?(\S+)/i);
   if (delM) { removeCompetitor(chatId, delM[1]); await send(chatId, `🗑 @${delM[1]} удалён.`); return; }
 
+  // 🖼 Баннер: "баннер: Заголовок / Подзаголовок"
+  if (/^баннер[\s:]/i.test(text)) {
+    const body = text.replace(/^баннер[\s:]*/i, "").trim();
+    const [headline, subtitle = ""] = body.split(/\s*\/\s*/);
+    if (!headline) { await send(chatId, "Напиши: баннер: Заголовок / Подзаголовок (необязательно)"); return; }
+    await sendBanner(chatId, headline.trim(), subtitle.trim());
+    return;
+  }
+
   if (/^(запомни|сохрани|заметка|идея)[\s:]/i.test(text)) {
     const idea = text.replace(/^(запомни|сохрани|заметка|идея)[\s:]*/i, "").trim();
     if (!idea) { await send(chatId, "Напиши: запомни: [идея]"); return; }
@@ -488,7 +597,7 @@ async function handle(msg) {
     appendHistory(chatId, text, result);
     lastResults.set(String(chatId), { text: result, request: text });
     await bot.deleteMessage(chatId, mid).catch(() => {});
-    await sendResult(chatId, result);
+    await sendResult(chatId, toTgMarkdown(result));
   } catch (e) {
     console.error(e.message);
     await editMsg(chatId, mid, "⚠️ Ошибка. Попробуй ещё раз.", true);
@@ -563,6 +672,32 @@ bot.on("callback_query", async cb => {
       await bot.sendMessage(chatId, "✅ Пост опубликован в канале!", { reply_markup: MAIN_KB });
     } catch (e) {
       await send(chatId, `❌ Не удалось опубликовать: ${e.message}\n\nПроверь что бот — администратор канала.`);
+    }
+    return;
+  }
+
+  // 🖼 Текст-баннер из поста
+  if (data.startsWith("banner_") && last) {
+    const bannerData = lastResults.get(`banner_${chatId}`);
+    if (bannerData) {
+      // Повторяем предыдущий баннер
+      await sendBanner(chatId, bannerData.headline, bannerData.subtitle);
+    } else {
+      // Берём заголовок из последнего поста (первая строка)
+      const firstLine = last.text.split("\n").find(l => l.trim().length > 10) || last.request;
+      const clean = firstLine.replace(/[*_#]/g, "").trim().slice(0, 80);
+      await sendBanner(chatId, clean);
+    }
+    return;
+  }
+
+  // 📐 Квадрат баннера
+  if (data.startsWith("bsq_")) {
+    const bannerData = lastResults.get(`banner_${chatId}`);
+    if (bannerData) {
+      await bot.sendChatAction(chatId, "upload_photo");
+      const buf = await createBanner(bannerData.headline, bannerData.subtitle, 1080, 1080);
+      await bot.sendPhoto(chatId, buf, { caption: "📐 1080×1080" });
     }
     return;
   }
