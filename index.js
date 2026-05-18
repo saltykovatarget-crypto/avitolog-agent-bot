@@ -73,18 +73,20 @@ const BUTTON_MAP = {
 };
 
 function postActionsKb(chatId) {
-  return {
-    inline_keyboard: [
-      [
-        { text: "↻ Другой вариант", callback_data: `regen_${chatId}` },
-        { text: "🔨 QA-разбор",     callback_data: `qa_${chatId}` },
-      ],
-      [
-        { text: "⭐️ Сделай круче",  callback_data: `chesky_${chatId}` },
-        { text: "💾 Сохранить идею", callback_data: `saveidea_${chatId}` },
-      ],
+  const kb = [
+    [
+      { text: "↻ Другой вариант", callback_data: `regen_${chatId}` },
+      { text: "🔨 QA-разбор",     callback_data: `qa_${chatId}` },
     ],
-  };
+    [
+      { text: "⭐️ Сделай круче",  callback_data: `chesky_${chatId}` },
+      { text: "💾 Сохранить идею", callback_data: `saveidea_${chatId}` },
+    ],
+  ];
+  if (process.env.CHANNEL_ID) {
+    kb.push([{ text: "📢 Опубликовать в канал", callback_data: `publish_${chatId}` }]);
+  }
+  return { inline_keyboard: kb };
 }
 
 const DEFAULT_COMPETITORS = [
@@ -159,6 +161,16 @@ function appendHistory(id, u, a) {
 
 // ─── Идеи ─────────────────────────────────────────────────────────────────────
 const getIdeas = id => ideasStore.get(String(id)) || [];
+const MINI_APP_SYNC = "https://marketing-coach-avito.netlify.app/.netlify/functions/sync";
+
+async function syncToMiniApp(userId, ideas) {
+  await fetch(MINI_APP_SYNC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: String(userId), key: "ideas", data: ideas }),
+  });
+}
+
 function saveIdea(id, text) {
   const list = getIdeas(id);
   list.unshift({ text, date: new Date().toLocaleString("ru-RU", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) });
@@ -383,7 +395,10 @@ async function handle(msg) {
     const idea = text.replace(/^(запомни|сохрани|заметка|идея)[\s:]*/i, "").trim();
     if (!idea) { await send(chatId, "Напиши: запомни: [идея]"); return; }
     saveIdea(chatId, idea);
-    await send(chatId, `💡 Сохранила: ${idea}`);
+    // Синхронизируем с Mini App
+    const allIdeas = getIdeas(chatId);
+    syncToMiniApp(chatId, allIdeas).catch(() => {});
+    await send(chatId, `💡 Сохранила: ${idea}\n\nПоявится в Mini App в разделе выбора темы.`);
     return;
   }
 
@@ -485,6 +500,22 @@ bot.on("callback_query", async cb => {
       await bot.deleteMessage(chatId, mid).catch(() => {});
       await sendResult(chatId, result);
     } catch { await editMsg(chatId, mid, "⚠️ Ошибка.", true); }
+    return;
+  }
+
+  // 📢 Опубликовать в канал
+  if (data.startsWith("publish_") && last) {
+    const channelId = process.env.CHANNEL_ID;
+    if (!channelId) { await send(chatId, "CHANNEL_ID не задан в переменных."); return; }
+    try {
+      // Берём только TG-версию если есть блоки платформ, иначе весь текст
+      const tgMatch = last.text.match(/TELEGRAM[\s\S]*?(?=ВКОНТАКТЕ|ТЕНЧАТ|$)/i);
+      const postText = tgMatch ? tgMatch[0].replace(/^TELEGRAM\s*/i, "").trim() : last.text;
+      await bot.sendMessage(channelId, postText);
+      await bot.sendMessage(chatId, "✅ Пост опубликован в канале!", { reply_markup: MAIN_KB });
+    } catch (e) {
+      await send(chatId, `❌ Не удалось опубликовать: ${e.message}\n\nПроверь что бот — администратор канала.`);
+    }
     return;
   }
 
