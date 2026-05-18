@@ -109,15 +109,22 @@ async function send(chatId, text, extra = {}) {
 }
 
 async function sendResult(chatId, text) {
-  // Сначала шлём текст чанками без разметки
   const chunks = String(text).match(/[\s\S]{1,4000}/g) || [text];
   for (let i = 0; i < chunks.length - 1; i++) {
-    await bot.sendMessage(chatId, chunks[i]).catch(() => {});
+    // Пробуем с Markdown, если сломается — шлём plain
+    await bot.sendMessage(chatId, chunks[i], { parse_mode: "Markdown" })
+      .catch(() => bot.sendMessage(chatId, chunks[i]).catch(() => {}));
   }
   // Последний чанк — с inline кнопками действий
   await bot.sendMessage(chatId, chunks[chunks.length - 1], {
+    parse_mode: "Markdown",
     reply_markup: postActionsKb(chatId),
-  }).catch(() => {});
+  }).catch(() =>
+    // Fallback без Markdown если есть незакрытые символы
+    bot.sendMessage(chatId, chunks[chunks.length - 1], {
+      reply_markup: postActionsKb(chatId),
+    }).catch(() => {})
+  );
 }
 
 async function sendWithStop(chatId, text) {
