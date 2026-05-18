@@ -106,10 +106,7 @@ function postActionsKb(chatId) {
       { text: "⭐️ Сделай круче",  callback_data: `chesky_${chatId}` },
       { text: "💾 Сохранить идею", callback_data: `saveidea_${chatId}` },
     ],
-    [
-      { text: "🎨 Фото-баннер",      callback_data: `image_${chatId}` },
-      { text: "🖼 Текст-баннер",      callback_data: `banner_${chatId}` },
-    ],
+
   ];
   if (process.env.CHANNEL_ID) {
     kb.push([{ text: "📢 Опубликовать в канал", callback_data: `publish_${chatId}` }]);
@@ -227,20 +224,7 @@ async function appendHistory(id, u, a) {
 }
 
 // ─── Генератор баннеров (sharp) ───────────────────────────────────────────────
-async function sendBanner(chatId, headline, subtitle = "") {
-  try {
-    await bot.sendChatAction(chatId, "upload_photo");
-    const prompt = `${headline}${subtitle ? ", " + subtitle : ""}, solid flat purple background #8B5CF6, white bold text, minimalist, professional branding, no gradient`;
-    const encoded = encodeURIComponent(prompt + ", no watermark, no logo");
-    const url = `https://image.pollinations.ai/prompt/${encoded}?width=1280&height=720&model=flux&nologo=true&seed=${Date.now()}`;
-    await bot.sendPhoto(chatId, url, {
-      caption: `🖼 *${headline}*${subtitle ? "\n" + subtitle : ""}\n\nAI Авитолог | Валерия Салтыкова`,
-      parse_mode: "Markdown",
-      reply_markup: { inline_keyboard: [[{ text: "↻ Другой вариант", callback_data: `bnew_${chatId}` }]] }
-    }).catch(() => send(chatId, `🖼 Баннер: ${url}`));
-    lastResults.set(`banner_${chatId}`, { headline, subtitle });
-  } catch { await send(chatId, "⚠️ Не удалось создать баннер."); }
-}
+
 
 // ─── Идеи// ─── Идеи (с Redis) ───────────────────────────────────────────────────────────
 async function getIdeas(id) {
@@ -265,45 +249,7 @@ async function saveIdea(id, text) {
   else _ideas.set(String(id), list);
 }
 
-// ─── Генерация изображений (Pollinations.ai — бесплатно) ─────────────────────
-
-const IMAGE_SYSTEM = `Ты — генератор промптов для изображений бренда AI Авитолог PRO.
-Бренд: фиолетовый #8B5CF6, тёмный фон #1A1A2E, белый текст, Inter/Montserrat шрифт, минимализм, технологично.
-По теме поста напиши ОДИН короткий промпт на английском для баннера БЕЗ ТЕКСТА на картинке.
-Только сам промпт, без пояснений. Максимум 180 символов.
-Обязательно включи: purple #8B5CF6, dark background #1A1A2E, minimalist tech aesthetic, no text, professional.`;
-
-async function generateImage(prompt, width = 1280, height = 720) {
-  const brand = "solid flat purple background #8B5CF6, NO gradient, minimalist tech aesthetic, dark decorative wave lines on edges, professional, no text, no watermark, no logo";
-  const encoded = encodeURIComponent(prompt + ", " + brand);
-  return `https://image.pollinations.ai/prompt/${encoded}?width=${width}&height=${height}&model=flux&nologo=true&seed=${Date.now()}`;
-}
-
-async function sendImageForPost(chatId, postText) {
-  try {
-    await bot.sendChatAction(chatId, "upload_photo");
-    const prompt = await claude(IMAGE_SYSTEM, `Тема поста:\n${postText.slice(0, 500)}`);
-    const url = await generateImage(prompt.trim());
-    await bot.sendPhoto(chatId, url, {
-      caption: `🎨 Баннер к посту\n\nПромпт: ${prompt.trim()}`,
-      reply_markup: {
-        inline_keyboard: [[
-          { text: "↻ Другой вариант", callback_data: `newimg_${chatId}` },
-          { text: "📐 Квадрат 1:1",   callback_data: `imgsq_${chatId}` },
-        ]]
-      }
-    }).catch(async () => {
-      // Если Telegram не смог загрузить — шлём ссылку
-      await send(chatId, `🎨 Баннер: ${url}\n\nПромпт: ${prompt.trim()}`);
-    });
-    // Сохраняем промпт для повторной генерации
-    lastResults.set(`img_${chatId}`, { prompt: prompt.trim() });
-  } catch (e) {
-    await send(chatId, "⚠️ Не удалось сгенерировать. Попробуй ещё раз.");
-  }
-}
-
-// ─── Конкуренты (с Redis) ─────────────────────────────────────────────────────
+// ─── Конкуренты// ─── Конкуренты (с Redis) ─────────────────────────────────────────────────────
 async function getCompetitors(id) {
   if (USE_REDIS) return (await rGet(`compet:${id}`)) || [...DEFAULT_COMPETITORS];
   return _compets.get(String(id)) || [...DEFAULT_COMPETITORS];
