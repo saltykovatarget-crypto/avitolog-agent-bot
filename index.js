@@ -134,13 +134,67 @@ async function scrapeChannel(username) {
   } catch { return []; }
 }
 
-// ─── Авито новости ────────────────────────────────────────────────────────────
+// ─── Мониторинг новостей — реальные источники ────────────────────────────────
+
+function parseRSS(xml, sourceName, limit = 4) {
+  const items = [];
+  const itemRe = /<item>([\s\S]*?)<\/item>/g;
+  let m;
+  while ((m = itemRe.exec(xml)) !== null && items.length < limit) {
+    const raw     = m[1];
+    const titleM  = raw.match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+    const dateM   = raw.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+    const title   = (titleM?.[1] || "").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").trim();
+    if (!title || title.length < 5) continue;
+    let date = "";
+    try { date = dateM?.[1] ? new Date(dateM[1]).toLocaleDateString("ru-RU", { day:"2-digit", month:"2-digit" }) : ""; } catch {}
+    items.push(`[${sourceName}${date ? " " + date : ""}] ${title}`);
+  }
+  return items;
+}
+
+async function fetchSource(url, name, limit = 4) {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)" },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return [];
+    return parseRSS(await res.text(), name, limit);
+  } catch { return []; }
+}
+
 async function getAvitoNews() {
-  const r = await fetch("https://www.avito.ru/web/1/blog/posts?perPage=5",
-    { headers: { "User-Agent": "Mozilla/5.0" } }).catch(() => null);
-  if (!r?.ok) return null;
-  const d = await r.json().catch(() => null);
-  return d?.items?.slice(0,5).map(i => `— ${i.title}`).join("\n") || null;
+  const SOURCES = [
+    {
+      url:  "https://news.google.com/rss/search?q=%D0%90%D0%B2%D0%B8%D1%82%D0%BE+%D0%B0%D0%BB%D0%B3%D0%BE%D1%80%D0%B8%D1%82%D0%BC&hl=ru&gl=RU&ceid=RU:ru",
+      name: "Google News",
+    },
+    {
+      url:  "https://news.yandex.ru/search.rss?text=%D0%90%D0%B2%D0%B8%D1%82%D0%BE&lr=213&rss=1",
+      name: "Яндекс",
+    },
+    {
+      url:  "https://habr.com/ru/rss/search/posts/?q=%D0%B0%D0%B2%D0%B8%D1%82%D0%BE&target_type=posts&order=date",
+      name: "Хабр",
+    },
+    {
+      url:  "https://vc.ru/rss",
+      name: "VC.ru",
+      filter: "авито",
+    },
+  ];
+
+  const results = await Promise.all(
+    SOURCES.map(s => fetchSource(s.url, s.name))
+  );
+
+  // Для VC.ru фильтруем по ключевому слову
+  const vcItems = results[3].filter(t => /авито/i.test(t));
+  results[3] = vcItems.slice(0, 3);
+
+  const all = results.flat().filter(Boolean);
+  return all.length > 0 ? all.join("\n") : null;
 }
 
 // ─── Голос (Groq) ─────────────────────────────────────────────────────────────
@@ -214,13 +268,17 @@ async function handle(msg) {
   }
 
   if (text === "/monitor") {
-    const mid  = await sendWithStop(chatId, "🔍 Ищу новости Авито...");
+    const mid  = await sendWithStop(chatId, "🔍 Мониторю Google News, Яндекс, Хабр, VC.ru...");
     const news = await getAvitoNews();
-    const result = await claude(AGENTS.analyst.systemPrompt,
-      news ? `Новости Авито:\n${news}\n\nПредложи 3 хука для постов.`
-           : "Предложи 3 актуальные темы для постов авитолога в 2025.");
-    await editMsg(chatId, mid, news ? `Новости Авито:\n${news}` : "Новости недоступны.", true);
-    await send(chatId, `📊 Идеи:\n\n${result}`);
+    const newsText = news
+      ? `Свежие новости про Авито:\n\n${news}`
+      : "Новости из внешних источников недоступны.";
+    const prompt = news
+      ? `Вот свежие новости про Авито из СМИ и блогов:\n${news}\n\nТы авитолог-практик. Предложи 3 конкретных хука для постов на основе этих новостей. Каждый хук — конкретная ситуация или цифра, не тезис.`
+      : "Предложи 3 актуальные темы для постов авитолога исходя из трендов рынка 2026 года.";
+    const result = await claude(AGENTS.analyst.systemPrompt, prompt);
+    await editMsg(chatId, mid, newsText, true);
+    await send(chatId, `📊 Идеи для постов:\n\n${result}`);
     return;
   }
 
