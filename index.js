@@ -341,7 +341,7 @@ const IMAGE_SYSTEM = `Ты — генератор промптов для изо
 Обязательно включи: purple #8B5CF6, dark background #1A1A2E, minimalist tech aesthetic, no text, professional.`;
 
 async function generateImage(prompt, width = 1280, height = 720) {
-  const brand = "purple #8B5CF6 accent, dark background #1A1A2E, minimalist tech, professional, no text, no watermark";
+  const brand = "solid flat purple background #8B5CF6, NO gradient, minimalist tech aesthetic, dark decorative wave lines on edges, professional, no text, no watermark, no logo";
   const encoded = encodeURIComponent(prompt + ", " + brand);
   return `https://image.pollinations.ai/prompt/${encoded}?width=${width}&height=${height}&model=flux&nologo=true&seed=${Date.now()}`;
 }
