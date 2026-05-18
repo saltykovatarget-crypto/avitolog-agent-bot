@@ -37,12 +37,36 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 console.log("🤖 Bot started. Allowed:", ALLOWED_IDS);
 
-// ─── In-memory хранилище ──────────────────────────────────────────────────────
-const histories   = new Map();
-const ideasStore  = new Map();
-const competStore = new Map();
+// ─── Redis (Upstash) — постоянное хранилище ───────────────────────────────────
+const REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const USE_REDIS   = !!(REDIS_URL && REDIS_TOKEN);
+
+async function redisCmd(...args) {
+  if (!USE_REDIS) return null;
+  try {
+    const res = await fetch(`${REDIS_URL}/${args.map(a => encodeURIComponent(a)).join("/")}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+    });
+    const { result } = await res.json();
+    return result;
+  } catch { return null; }
+}
+
+async function rGet(key)        { const v = await redisCmd("GET", key); return v ? JSON.parse(v) : null; }
+async function rSet(key, value, ttl) {
+  const v = JSON.stringify(value);
+  if (ttl) await redisCmd("SET", key, v, "EX", ttl);
+  else     await redisCmd("SET", key, v);
+}
+async function rDel(key)        { await redisCmd("DEL", key); }
+
+// ─── In-memory fallback (если Redis не подключён) ────────────────────────────
+const _histories  = new Map();
+const _ideas      = new Map();
+const _compets    = new Map();
 const stopFlags   = new Set();
-const lastResults = new Map(); // chatId → { text, request } для регенерации
+const lastResults = new Map();
 
 // ─── Клавиатуры ───────────────────────────────────────────────────────────────
 const MAIN_KB = {
@@ -175,15 +199,22 @@ const PLAT_SYSTEM = "Ты — SMM-редактор. Адаптируй пост 
 const platPrompt  = post =>
   `ПОСТ:\n${post}\n\nВерни три блока:\n\nTELEGRAM\n[хук 2 строки, эмодзи ➡️📌⚡️💜, #авито #авитолог, подпись: 💜 AI Авитолог | Валерия]\n\nВКОНТАКТЕ\n[10-20 строк, #авито #авитопродвижение]\n\nТЕНЧАТ\n[деловой тон, без хэштегов, 15-25 строк]`;
 
-// ─── История ──────────────────────────────────────────────────────────────────
-const getHistory   = id => histories.get(String(id)) || [];
-const clearHistory = id => histories.delete(String(id));
-function appendHistory(id, u, a) {
-  const h = getHistory(id);
-  h.push({ role: "user", content: String(u).slice(0, 2000) });
+// ─── История (с Redis) ────────────────────────────────────────────────────────
+async function getHistory(id) {
+  if (USE_REDIS) return (await rGet(`hist:${id}`)) || [];
+  return _histories.get(String(id)) || [];
+}
+async function clearHistory(id) {
+  if (USE_REDIS) await rDel(`hist:${id}`);
+  else _histories.delete(String(id));
+}
+async function appendHistory(id, u, a) {
+  const h = await getHistory(id);
+  h.push({ role: "user",      content: String(u).slice(0, 2000) });
   h.push({ role: "assistant", content: String(a).slice(0, 4000) });
   if (h.length > 20) h.splice(0, h.length - 20);
-  histories.set(String(id), h);
+  if (USE_REDIS) await rSet(`hist:${id}`, h, 86400); // 24ч TTL
+  else _histories.set(String(id), h);
 }
 
 // ─── Генератор баннеров (sharp) ───────────────────────────────────────────────
@@ -269,8 +300,11 @@ async function sendBanner(chatId, headline, subtitle = "") {
   }
 }
 
-// ─── Идеи ─────────────────────────────────────────────────────────────────────
-const getIdeas = id => ideasStore.get(String(id)) || [];
+// ─── Идеи (с Redis) ───────────────────────────────────────────────────────────
+async function getIdeas(id) {
+  if (USE_REDIS) return (await rGet(`ideas:${id}`)) || [];
+  return _ideas.get(String(id)) || [];
+}
 const MINI_APP_SYNC = "https://marketing-coach-avito.netlify.app/.netlify/functions/sync";
 
 async function syncToMiniApp(userId, ideas) {
@@ -281,11 +315,12 @@ async function syncToMiniApp(userId, ideas) {
   });
 }
 
-function saveIdea(id, text) {
-  const list = getIdeas(id);
+async function saveIdea(id, text) {
+  const list = await getIdeas(id);
   list.unshift({ text, date: new Date().toLocaleString("ru-RU", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) });
   if (list.length > 100) list.splice(100);
-  ideasStore.set(String(id), list);
+  if (USE_REDIS) await rSet(`ideas:${id}`, list);
+  else _ideas.set(String(id), list);
 }
 
 // ─── Генерация изображений (Pollinations.ai — бесплатно) ─────────────────────
@@ -326,18 +361,25 @@ async function sendImageForPost(chatId, postText) {
   }
 }
 
-// ─── Конкуренты ───────────────────────────────────────────────────────────────
-const getCompetitors = id => competStore.get(String(id)) || [...DEFAULT_COMPETITORS];
-function addCompetitor(id, username) {
-  const list = getCompetitors(id), clean = username.replace(/^@/, "");
+// ─── Конкуренты (с Redis) ─────────────────────────────────────────────────────
+async function getCompetitors(id) {
+  if (USE_REDIS) return (await rGet(`compet:${id}`)) || [...DEFAULT_COMPETITORS];
+  return _compets.get(String(id)) || [...DEFAULT_COMPETITORS];
+}
+async function addCompetitor(id, username) {
+  const list  = await getCompetitors(id);
+  const clean = username.replace(/^@/, "");
   if (list.find(c => c.username === clean)) return false;
   list.push({ name: clean, username: clean });
-  competStore.set(String(id), list); return true;
+  if (USE_REDIS) await rSet(`compet:${id}`, list);
+  else _compets.set(String(id), list);
+  return true;
 }
-function removeCompetitor(id, username) {
-  const clean = username.replace(/^@/, "");
-  const list  = getCompetitors(id).filter(c => c.username !== clean);
-  competStore.set(String(id), list);
+async function removeCompetitor(id, username) {
+  const clean    = username.replace(/^@/, "");
+  const filtered = (await getCompetitors(id)).filter(c => c.username !== clean);
+  if (USE_REDIS) await rSet(`compet:${id}`, filtered);
+  else _compets.set(String(id), filtered);
 }
 async function scrapeChannel(username) {
   try {
@@ -479,17 +521,17 @@ async function handle(msg) {
   if (!text) return;
 
   if (text === "/start")  {
-    clearHistory(chatId);
+    await clearHistory(chatId);
     await bot.sendMessage(chatId, START, { reply_markup: MAIN_KB }).catch(() => {});
     return;
   }
   if (text === "/team")   { await send(chatId, TEAM); return; }
-  if (text === "/new")    { clearHistory(chatId); await send(chatId, "🆕 История очищена."); return; }
+  if (text === "/new")    { await clearHistory(chatId); await send(chatId, "🆕 История очищена."); return; }
   if (text === "/myid")   { await send(chatId, `Твой ID: ${chatId}`); return; }
   if (text === "/stop" || /^стоп$/i.test(text)) { stopFlags.add(chatId); await send(chatId, "🛑 Остановлю после шага."); return; }
 
   if (text === "/ideas" || /мои идеи|мои заметки|покажи идеи/i.test(text)) {
-    const list = getIdeas(chatId);
+    const list = await getIdeas(chatId);
     if (!list.length) { await send(chatId, "📭 Нет идей. Напиши: запомни: [идея]"); return; }
     await send(chatId, `💡 Твои идеи:\n\n${list.slice(0,15).map((x,n)=>`${n+1}. ${x.text}  (${x.date})`).join("\n\n")}\n\n«сделай пост из идей»`);
     return;
@@ -511,7 +553,7 @@ async function handle(msg) {
   }
 
   if (text === "/competitors") {
-    const list = getCompetitors(chatId);
+    const list = await getCompetitors(chatId);
     const mid  = await sendWithStop(chatId, `🕵️ Мониторю ${list.length} каналов...`);
     const posts= [];
     for (const c of list) {
@@ -529,15 +571,15 @@ async function handle(msg) {
   }
 
   if (text === "/список" || /мои конкуренты/i.test(text)) {
-    const list = getCompetitors(chatId);
+    const list = await getCompetitors(chatId);
     await send(chatId, `🕵️ Отслеживаю:\n${list.map((c,i)=>`${i+1}. @${c.username}`).join("\n")}\n\nДобавить: добавь конкурента @канал`);
     return;
   }
 
   const addM = text.match(/^добавь конкурента\s+@?(\S+)/i);
-  if (addM) { const ok = addCompetitor(chatId, addM[1]); await send(chatId, ok ? `✅ @${addM[1]} добавлен.` : "Уже есть."); return; }
+  if (addM) { const ok = await addCompetitor(chatId, addM[1]); await send(chatId, ok ? `✅ @${addM[1]} добавлен.` : "Уже есть."); return; }
   const delM = text.match(/^удали конкурента\s+@?(\S+)/i);
-  if (delM) { removeCompetitor(chatId, delM[1]); await send(chatId, `🗑 @${delM[1]} удалён.`); return; }
+  if (delM) { await removeCompetitor(chatId, delM[1]); await send(chatId, `🗑 @${delM[1]} удалён.`); return; }
 
   // 🖼 Баннер: "баннер: Заголовок / Подзаголовок"
   if (/^баннер[\s:]/i.test(text)) {
@@ -551,9 +593,9 @@ async function handle(msg) {
   if (/^(запомни|сохрани|заметка|идея)[\s:]/i.test(text)) {
     const idea = text.replace(/^(запомни|сохрани|заметка|идея)[\s:]*/i, "").trim();
     if (!idea) { await send(chatId, "Напиши: запомни: [идея]"); return; }
-    saveIdea(chatId, idea);
+    await saveIdea(chatId, idea);
     // Синхронизируем с Mini App
-    const allIdeas = getIdeas(chatId);
+    const allIdeas = await getIdeas(chatId);
     syncToMiniApp(chatId, allIdeas).catch(() => {});
     await send(chatId, `💡 Сохранила: ${idea}\n\nПоявится в Mini App в разделе выбора темы.`);
     return;
@@ -563,7 +605,7 @@ async function handle(msg) {
   stopFlags.delete(chatId);
   const route   = detectRoute(text);
   const first   = AGENTS[route.agents[0]];
-  const history = getHistory(chatId);
+  const history = await getHistory(chatId);
   const mid     = await sendWithStop(chatId, `${first.emoji} ${first.name} — ${route.label}...`);
 
   let result = text;
@@ -574,7 +616,7 @@ async function handle(msg) {
       if (i > 0) await editMsg(chatId, mid, `✅ → ${agent.emoji} ${agent.name}...`);
       let userMsg = i === 0 ? text : result;
       if (route.agents[i] === "ideas") {
-        const saved = getIdeas(chatId).slice(0,10).map((x,n)=>`${n+1}. ${x.text}`).join("\n");
+        const saved = (await getIdeas(chatId)).slice(0,10).map((x,n)=>`${n+1}. ${x.text}`).join("\n");
         userMsg = `Мои идеи:\n${saved||"Нет."}\n\nЗапрос: ${text}`;
       }
       // Для контентных агентов — добавляем реальные кейсы
@@ -594,7 +636,7 @@ async function handle(msg) {
       await editMsg(chatId, mid, "✅ → 📱 Адаптирую под платформы...");
       result = await claude(PLAT_SYSTEM, platPrompt(result));
     }
-    appendHistory(chatId, text, result);
+    await appendHistory(chatId, text, result);
     lastResults.set(String(chatId), { text: result, request: text });
     await bot.deleteMessage(chatId, mid).catch(() => {});
     await sendResult(chatId, toTgMarkdown(result));
@@ -630,7 +672,7 @@ bot.on("callback_query", async cb => {
     try {
       const route = detectRoute(last.request);
       const agent = AGENTS[route.agents[0]];
-      const result = await claude(agent.systemPrompt, last.request, getHistory(chatId));
+      const result = await claude(agent.systemPrompt, last.request, await getHistory(chatId));
       lastResults.set(String(chatId), { text: result, request: last.request });
       await bot.deleteMessage(chatId, mid).catch(() => {});
       await sendResult(chatId, result);
@@ -733,7 +775,7 @@ bot.on("callback_query", async cb => {
   // 💾 Сохранить идею
   if (data.startsWith("saveidea_") && last) {
     const snippet = last.request.slice(0, 120);
-    saveIdea(chatId, snippet);
+    await saveIdea(chatId, snippet);
     await bot.sendMessage(chatId, `💾 Сохранила: ${snippet}\n\n/ideas — все заметки`, { reply_markup: MAIN_KB }).catch(() => {});
     return;
   }
