@@ -2,6 +2,7 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const Anthropic   = require("@anthropic-ai/sdk");
 const { detectRoute } = require("./router");
+const { getContextCases } = require("./cases");
 
 // ─── Агенты ───────────────────────────────────────────────────────────────────
 const AGENTS = {
@@ -402,7 +403,12 @@ async function handle(msg) {
         const saved = getIdeas(chatId).slice(0,10).map((x,n)=>`${n+1}. ${x.text}`).join("\n");
         userMsg = `Мои идеи:\n${saved||"Нет."}\n\nЗапрос: ${text}`;
       }
-      result = await claude(agent.systemPrompt, userMsg, i === 0 ? history : []);
+      // Для контентных агентов — добавляем реальные кейсы
+      const CASES_AGENTS = ["smm", "editor", "sales", "analyst", "content-director"];
+      const sysPrompt = CASES_AGENTS.includes(route.agents[i])
+        ? agent.systemPrompt + `\n\nРЕАЛЬНЫЕ КЕЙСЫ АГЕНТСТВА FORMULA — используй эти цифры:\n${getContextCases(3)}`
+        : agent.systemPrompt;
+      result = await claude(sysPrompt, userMsg, i === 0 ? history : []);
     }
     if (stopFlags.has(chatId)) { await editMsg(chatId, mid, "🛑 Остановлено", true); return; }
     if (route.platforms) {
