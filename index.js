@@ -190,14 +190,16 @@ function saveIdea(id, text) {
 
 // ─── Генерация изображений (Pollinations.ai — бесплатно) ─────────────────────
 
-const IMAGE_SYSTEM = `Ты — генератор промптов для изображений. Бренд: фиолетовый #8B5CF6, тёмный фон, минимализм.
-По теме поста напиши ОДИН короткий промпт на английском для генерации баннера (без текста на картинке).
-Формат: только сам промпт, без пояснений. Максимум 200 символов.
-Стиль: modern, minimalist, purple accent #8B5CF6, dark background, professional, no text.`;
+const IMAGE_SYSTEM = `Ты — генератор промптов для изображений бренда AI Авитолог PRO.
+Бренд: фиолетовый #8B5CF6, тёмный фон #1A1A2E, белый текст, Inter/Montserrat шрифт, минимализм, технологично.
+По теме поста напиши ОДИН короткий промпт на английском для баннера БЕЗ ТЕКСТА на картинке.
+Только сам промпт, без пояснений. Максимум 180 символов.
+Обязательно включи: purple #8B5CF6, dark background #1A1A2E, minimalist tech aesthetic, no text, professional.`;
 
 async function generateImage(prompt, width = 1280, height = 720) {
-  const encoded = encodeURIComponent(prompt + ", purple #8B5CF6 accent, dark background, minimalist, no text, professional");
-  return `https://image.pollinations.ai/prompt/${encoded}?width=${width}&height=${height}&model=flux&nologo=true`;
+  const brand = "purple #8B5CF6 accent, dark background #1A1A2E, minimalist tech, professional, no text, no watermark";
+  const encoded = encodeURIComponent(prompt + ", " + brand);
+  return `https://image.pollinations.ai/prompt/${encoded}?width=${width}&height=${height}&model=flux&nologo=true&seed=${Date.now()}`;
 }
 
 async function sendImageForPost(chatId, postText) {
