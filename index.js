@@ -82,6 +82,9 @@ function postActionsKb(chatId) {
       { text: "⭐️ Сделай круче",  callback_data: `chesky_${chatId}` },
       { text: "💾 Сохранить идею", callback_data: `saveidea_${chatId}` },
     ],
+    [
+      { text: "🎨 Картинка к посту", callback_data: `image_${chatId}` },
+    ],
   ];
   if (process.env.CHANNEL_ID) {
     kb.push([{ text: "📢 Опубликовать в канал", callback_data: `publish_${chatId}` }]);
@@ -183,6 +186,42 @@ function saveIdea(id, text) {
   list.unshift({ text, date: new Date().toLocaleString("ru-RU", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) });
   if (list.length > 100) list.splice(100);
   ideasStore.set(String(id), list);
+}
+
+// ─── Генерация изображений (Pollinations.ai — бесплатно) ─────────────────────
+
+const IMAGE_SYSTEM = `Ты — генератор промптов для изображений. Бренд: фиолетовый #8B5CF6, тёмный фон, минимализм.
+По теме поста напиши ОДИН короткий промпт на английском для генерации баннера (без текста на картинке).
+Формат: только сам промпт, без пояснений. Максимум 200 символов.
+Стиль: modern, minimalist, purple accent #8B5CF6, dark background, professional, no text.`;
+
+async function generateImage(prompt, width = 1280, height = 720) {
+  const encoded = encodeURIComponent(prompt + ", purple #8B5CF6 accent, dark background, minimalist, no text, professional");
+  return `https://image.pollinations.ai/prompt/${encoded}?width=${width}&height=${height}&model=flux&nologo=true`;
+}
+
+async function sendImageForPost(chatId, postText) {
+  try {
+    await bot.sendChatAction(chatId, "upload_photo");
+    const prompt = await claude(IMAGE_SYSTEM, `Тема поста:\n${postText.slice(0, 500)}`);
+    const url = await generateImage(prompt.trim());
+    await bot.sendPhoto(chatId, url, {
+      caption: `🎨 Баннер к посту\n\nПромпт: ${prompt.trim()}`,
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "↻ Другой вариант", callback_data: `newimg_${chatId}` },
+          { text: "📐 Квадрат 1:1",   callback_data: `imgsq_${chatId}` },
+        ]]
+      }
+    }).catch(async () => {
+      // Если Telegram не смог загрузить — шлём ссылку
+      await send(chatId, `🎨 Баннер: ${url}\n\nПромпт: ${prompt.trim()}`);
+    });
+    // Сохраняем промпт для повторной генерации
+    lastResults.set(`img_${chatId}`, { prompt: prompt.trim() });
+  } catch (e) {
+    await send(chatId, "⚠️ Не удалось сгенерировать. Попробуй ещё раз.");
+  }
 }
 
 // ─── Конкуренты ───────────────────────────────────────────────────────────────
@@ -522,6 +561,34 @@ bot.on("callback_query", async cb => {
       await bot.sendMessage(chatId, "✅ Пост опубликован в канале!", { reply_markup: MAIN_KB });
     } catch (e) {
       await send(chatId, `❌ Не удалось опубликовать: ${e.message}\n\nПроверь что бот — администратор канала.`);
+    }
+    return;
+  }
+
+  // 🎨 Картинка к посту
+  if (data.startsWith("image_") && last) {
+    await sendImageForPost(chatId, last.text);
+    return;
+  }
+
+  // ↻ Другой вариант картинки
+  if (data.startsWith("newimg_")) {
+    const imgData = lastResults.get(`img_${chatId}`);
+    if (imgData?.prompt) {
+      await bot.sendChatAction(chatId, "upload_photo");
+      const url = await generateImage(imgData.prompt + " variation " + Date.now());
+      await bot.sendPhoto(chatId, url, { caption: "🎨 Другой вариант" }).catch(() => send(chatId, url));
+    }
+    return;
+  }
+
+  // 📐 Квадрат 1:1
+  if (data.startsWith("imgsq_")) {
+    const imgData = lastResults.get(`img_${chatId}`);
+    if (imgData?.prompt) {
+      await bot.sendChatAction(chatId, "upload_photo");
+      const url = await generateImage(imgData.prompt, 1080, 1080);
+      await bot.sendPhoto(chatId, url, { caption: "🎨 Квадрат 1080×1080" }).catch(() => send(chatId, url));
     }
     return;
   }
