@@ -4,6 +4,7 @@ const ROUTES = [
   { pattern: /сломай|найди ошибки|проверь жёстко|adversarial/i, agents: ["adversarial"], platforms: false, label: "ломаю как QA" },
   { pattern: /проверь логику|я думаю что|правильно ли|paranoid|параноид/i, agents: ["paranoid"], platforms: false, label: "проверяю логику" },
   { pattern: /план.на.недел|контент.план|недельный.план|оцени.пост|разбор.поста/i, agents: ["content-director"], platforms: false, label: "работаю как контент-директор" },
+  { pattern: /напиши кейс|пишем кейс|оформи кейс|хочу кейс|кейс по|записать кейс/i, agents: ["case-writer"], platforms: false, label: "начинаю интервью по кейсу" },
   { pattern: /сценари|reels|рилс|видео|shorts/i, agents: ["scriptwriter"], platforms: false, label: "пишу сценарий" },
   { pattern: /обложк|баннер|b.roll|промпт.для.изображ|визуал/i, agents: ["visual"], platforms: false, label: "создаю визуал" },
   { pattern: /сайт|тариф|описание.продукт|лендинг|онбординг.текст/i, agents: ["product-marketer"], platforms: false, label: "пишу текст для продукта" },

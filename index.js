@@ -15,6 +15,7 @@ const AGENTS = {
   ideas:              require("./agents/ideas"),
   competitor:         require("./agents/competitor"),
   "content-director": require("./agents/content-director"),
+  "case-writer":      require("./agents/case-writer"),
   "product-marketer": require("./agents/product-marketer"),
   community:          require("./agents/community"),
   onboarding:         require("./agents/onboarding"),
@@ -46,7 +47,7 @@ const lastResults = new Map(); // chatId → { text, request } для реген
 // ─── Клавиатуры ───────────────────────────────────────────────────────────────
 const MAIN_KB = {
   keyboard: [
-    [{ text: "✍️ Пост" },       { text: "🎬 Reels" },       { text: "🔍 SEO статья" }],
+    [{ text: "✍️ Пост" },       { text: "🎬 Reels" },       { text: "📋 Кейс" }],
     [{ text: "🕵️ Конкуренты" }, { text: "📰 Мониторинг" },  { text: "💡 Идеи" }],
     [{ text: "🗓 План недели" }, { text: "💰 Продажи" },     { text: "🎨 Визуал" }],
     [{ text: "⭐️ Сделай круче" },{ text: "🔨 QA-разбор" },  { text: "🆕 Новый чат" }],
@@ -58,6 +59,7 @@ const MAIN_KB = {
 const BUTTON_MAP = {
   "✍️ Пост":         "напиши пост",
   "🎬 Reels":         "сценарий reels",
+  "📋 Кейс":          "напиши кейс",
   "🔍 SEO статья":    "статья дзен",
   "🕵️ Конкуренты":   "/competitors",
   "📰 Мониторинг":   "/monitor",
