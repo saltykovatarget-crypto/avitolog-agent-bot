@@ -514,7 +514,7 @@ async function handle(msg) {
       }
       // Для продажника — контекст сервиса
       if (route.agents[i] === "sales") {
-        sysPrompt += `\n\nКОНТЕКСТ: AI Авитолог PRO работает, можно приглашать тестировать. 3 запроса бесплатно на aiavitologpro.ru`;
+        sysPrompt += `\n\nКОНТЕКСТ: AI Авитолог PRO работает, можно приглашать тестировать. загрузи объявление — 3 запроса бесплатно на aiavitologpro.ru`;
       }
       result = await claude(sysPrompt, userMsg, i === 0 ? history : []);
     }
