@@ -415,6 +415,39 @@ async function handle(msg) {
   }
   if (text === "/team")   { await send(chatId, TEAM); return; }
   if (text === "/new")    { await clearHistory(chatId); await send(chatId, "🆕 История очищена."); return; }
+
+  if (text === "/stats" || text === "/статистика") {
+    const mid = await sendWithStop(chatId, "📊 Анализирую посты канала...");
+    const posts = await getPostsForStats();
+    if (!posts.length) {
+      await editMsg(chatId, mid, "📭 Постов пока нет — бот начнёт собирать статистику с сегодняшнего дня. Как только опубликуешь пост в канале — он попадёт в базу.", true);
+      return;
+    }
+    const sorted = [...posts].sort((a, b) => (b.views || 0) - (a.views || 0));
+    const top = sorted.slice(0, 10);
+    const avgViews = Math.round(posts.reduce((s, p) => s + (p.views || 0), 0) / posts.length);
+    const statsText = top.map((p, i) => {
+      const d = new Date(p.date * 1000).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+      const m = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i+1}.`;
+      return `${m} ${p.preview.slice(0, 55)} — *${p.views || 0}* просм (${d})`;
+    }).join("\n");
+
+    await editMsg(chatId, mid, "📊 Готово → 🤖 Анализирую тренды...");
+    const analysis = await claude(
+      AGENTS.analyst.systemPrompt,
+      `Статистика последних постов Telegram-канала @traffic_agency_formula.
+Средние просмотры: ${avgViews}. Постов в базе: ${posts.length}.
+
+Топ по просмотрам:
+${top.map(p => `- "${p.preview.slice(0,60)}" — ${p.views||0} просм`).join("\n")}
+
+Проанализируй: какие форматы и темы работают лучше? Что повторить? 3 конкретные рекомендации.`
+    );
+    await editMsg(chatId, mid, "✅ Готово", true);
+    await send(chatId, `📊 Статистика канала — ${posts.length} постов\nСредние просмотры: ${avgViews}\n\nТоп:\n${statsText}`);
+    await sendResult(chatId, toTgMarkdown(`📈 Анализ:\n\n${analysis}`));
+    return;
+  }
   if (text === "/myid")   { await send(chatId, `Твой ID: ${chatId}`); return; }
   if (text === "/stop" || /^стоп$/i.test(text)) { stopFlags.add(chatId); await send(chatId, "🛑 Остановлю после шага."); return; }
 
@@ -666,6 +699,51 @@ bot.on("callback_query", async cb => {
     await bot.sendMessage(chatId, `💾 Сохранила: ${snippet}\n\n/ideas — все заметки`, { reply_markup: MAIN_KB }).catch(() => {});
     return;
   }
+});
+
+// ─── Трекинг постов канала ────────────────────────────────────────────────────
+
+async function savePost(msg) {
+  try {
+    const store = USE_REDIS ? null : null; // используем Redis напрямую
+    const key = "channel_posts";
+    const existing = await rGet(key) || [];
+    const text = msg.text || msg.caption || "";
+    const firstLine = text.split("\n").find(l => l.trim().length > 5) || text.slice(0, 80);
+    const entry = {
+      id:      msg.message_id,
+      date:    msg.date,
+      preview: firstLine.slice(0, 100),
+      views:   msg.views || 0,
+      reactions: msg.reactions?.results?.reduce((s, r) => s + (r.count || 0), 0) || 0,
+    };
+    // Добавляем в начало, храним последние 30
+    existing.unshift(entry);
+    if (existing.length > 30) existing.splice(30);
+    await rSet(key, existing);
+  } catch (e) { console.error("savePost:", e.message); }
+}
+
+async function getPostsForStats() {
+  return (await rGet("channel_posts")) || [];
+}
+
+// Слушаем посты из канала
+bot.on("channel_post", async msg => {
+  if (!process.env.CHANNEL_ID) return;
+  await savePost(msg);
+});
+
+// Обновляем просмотры при редактировании
+bot.on("edited_channel_post", async msg => {
+  try {
+    const posts = await getPostsForStats();
+    const idx = posts.findIndex(p => p.id === msg.message_id);
+    if (idx !== -1) {
+      posts[idx].views = msg.views || posts[idx].views;
+      await rSet("channel_posts", posts);
+    }
+  } catch {}
 });
 
 bot.on("message", msg => handle(msg).catch(console.error));
