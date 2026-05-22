@@ -18,14 +18,14 @@ const ROUTES = [
   { pattern: /лид.магнит|гайд|чек.лист|шаблон.для.скачивания/i, agents: ["lead-magnet"], platforms: false, label: "создаю лид-магнит" },
   { pattern: /ответь.на.коммент|в.личку.написали|как.ответить/i, agents: ["community"], platforms: false, label: "отвечаю на сообщение" },
   { pattern: /стать[юя]|дзен|seo|сео|статья|яндекс/i, agents: ["seo", "editor"], platforms: false, label: "пишу статью" },
-  { pattern: /из идей|по идеям|возьми из заметок|используй идеи/i, agents: ["ideas", "smm", "editor"], platforms: true, label: "беру идею из заметок" },
-  { pattern: /тем[аую]|о чём|что написать|предложи.тему/i, agents: ["analyst", "smm"], platforms: true, label: "ищу тему" },
+  { pattern: /из идей|по идеям|возьми из заметок|используй идеи/i, agents: ["ideas", "smm", "editor"], platforms: false, label: "беру идею из заметок" },
+  { pattern: /тем[аую]|о чём|что написать|предложи.тему/i, agents: ["analyst", "smm"], platforms: false, label: "ищу тему" },
   { pattern: /проверь|редактур|улучши|исправь/i, agents: ["editor"], platforms: false, label: "проверяю текст" },
-  { pattern: /напиши|пост|кейс|лайфхак|история/i, agents: ["smm", "editor"], platforms: true, label: "пишу пост" },
+  { pattern: /напиши|пост|кейс|лайфхак|история/i, agents: ["smm", "editor"], platforms: false, label: "пишу пост" },
 ];
 
 function detectRoute(text) {
-  return ROUTES.find(r => r.pattern.test(text)) || { agents: ["smm", "editor"], platforms: true, label: "пишу пост" };
+  return ROUTES.find(r => r.pattern.test(text)) || { agents: ["smm", "editor"], platforms: false, label: "пишу пост" };
 }
 
 module.exports = { detectRoute };
