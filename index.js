@@ -37,6 +37,15 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 console.log("🤖 Bot started. Allowed:", ALLOWED_IDS);
 
+// Меню команд / в Telegram — только 5 ключевых
+bot.setMyCommands([
+  { command: "start", description: "🏠 Начать" },
+  { command: "ideas", description: "💡 Мои идеи" },
+  { command: "team",  description: "👥 Команда (18 агентов)" },
+  { command: "new",   description: "🆕 Очистить чат" },
+  { command: "stop",  description: "🛑 Остановить генерацию" },
+]).catch(() => {});
+
 // ─── Redis (Upstash) — постоянное хранилище ───────────────────────────────────
 const REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -71,10 +80,9 @@ const lastResults = new Map();
 // ─── Клавиатуры ───────────────────────────────────────────────────────────────
 const MAIN_KB = {
   keyboard: [
-    [{ text: "✍️ Пост" },       { text: "🎬 Reels" },       { text: "📋 Кейс" }],
-    [{ text: "🕵️ Конкуренты" }, { text: "📰 Мониторинг" },  { text: "💡 Идеи" }],
-    [{ text: "🗓 План недели" }, { text: "💰 Продажи" },     { text: "🎨 Визуал" }],
-    [{ text: "⭐️ Сделай круче" },{ text: "🔨 QA-разбор" },  { text: "🆕 Новый чат" }],
+    [{ text: "✍️ Пост" },        { text: "🎬 Reels" }],
+    [{ text: "📋 Кейс" },         { text: "💡 Идеи" }],
+    [{ text: "🗓 План недели" },  { text: "🆕 Новый чат" }],
   ],
   resize_keyboard: true,
   persistent: true,
@@ -84,15 +92,8 @@ const BUTTON_MAP = {
   "✍️ Пост":         "напиши пост",
   "🎬 Reels":         "сценарий reels",
   "📋 Кейс":          "напиши кейс",
-  "🔍 SEO статья":    "статья дзен",
-  "🕵️ Конкуренты":   "/competitors",
-  "📰 Мониторинг":   "/monitor",
   "💡 Идеи":         "/ideas",
   "🗓 План недели":   "план на неделю",
-  "💰 Продажи":      "продающий оффер",
-  "🎨 Визуал":       "обложка баннер",
-  "⭐️ Сделай круче": "сделай круче:",
-  "🔨 QA-разбор":    "сломай:",
   "🆕 Новый чат":    "/new",
 };
 
@@ -366,19 +367,15 @@ async function transcribeVoice(fileId) {
 // ─── Тексты ───────────────────────────────────────────────────────────────────
 const START = `Привет! Я — твоя AI-команда маркетинга 👋
 
-Напиши что нужно:
-— «напиши пост про кейс с юристами»
-— «сценарий reels про CTR»
-— «проверь текст: [вставь]»
-— «статья для Дзен про алгоритм Авито»
-— «запомни: [идея]»
-— «сделай круче: [текст]»   ← Chesky
-— «сломай: [текст]»         ← QA-разбор
-— «хочу запустить идею»     ← Office Hours
+Нажми кнопку или просто напиши:
+✍️ «напиши пост про кейс с юристами»
+🎬 «сценарий reels про CTR»
+📋 «хочу кейс по [нише]»
+💡 «запомни: [идея]»
 
 🎙 Голосовые тоже понимаю!
 
-/ideas /monitor /competitors /team /new /stop`;
+/team — вся команда · /new — новый чат`;
 
 const TEAM = `Команда (18 специалистов):
 ✍️ SMM · 📝 Редактор · 🎬 Сценарист · 📊 Аналитик
