@@ -122,6 +122,8 @@ const DEFAULT_COMPETITORS = [
   { name: "Екимов",             username: "ekimov_calculator" },
   { name: "Авито без секретов", username: "avito_bez_secretov" },
   { name: "Авито блог",         username: "avitoblog" },
+  { name: "Авито B2B",          username: "avito_b2b" },
+  { name: "Авито Услуги",       username: "avito_uslugi" },
 ];
 
 // ─── Telegram helpers ─────────────────────────────────────────────────────────
