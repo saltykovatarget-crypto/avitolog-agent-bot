@@ -416,6 +416,38 @@ async function handle(msg) {
   if (text === "/team")   { await send(chatId, TEAM); return; }
   if (text === "/new")    { await clearHistory(chatId); await send(chatId, "🆕 История очищена."); return; }
 
+  if (text === "/dzen" || text === "/дзен") {
+    const mid = await sendWithStop(chatId, "🔍 Подбираю темы для Дзен...");
+    const ideas = await claude(
+      AGENTS.seo.systemPrompt,
+      `Предложи 7 тем для статей на Дзен для авитолога и предпринимателей.
+Темы должны:
+- Отвечать на реальные запросы которые люди задают в поиске и AI-чатах про Авито
+- Содержать цифры или конкретный результат в заголовке
+- Позволять упомянуть AI Авитолог PRO как решение
+- Быть актуальны для бизнеса на Авито в 2026
+
+Формат: только список тем с H1-заголовком, одна строка каждая. Без вступлений.`
+    );
+    await editMsg(chatId, mid, "✅ Готово", true);
+    await sendResult(chatId, toTgMarkdown(\`🔍 Темы для Дзен-статей:\n\n\${ideas}\n\nВыбери тему → напиши \"статья дзен: [название]\" → получишь полную статью\`));
+    return;
+  }
+
+  if (text === "/план" || text === "/plan") {
+    const saved = await rGet(`${chatId}:weekPlan`);
+    if (!saved || typeof saved !== "object") {
+      await send(chatId, "📅 Сохранённого плана нет.\n\nСоздай в Mini App (кнопка «Открыть») → вкладка «📅 План» → «🤖 AI-план» или введи темы вручную и нажми «Сохранить план».\n\nПосле сохранения план появится здесь.");
+      return;
+    }
+    const DAY_MAP = {monday:"ПН",tuesday:"ВТ",wednesday:"СР",thursday:"ЧТ",friday:"ПТ"};
+    const lines = Object.entries(DAY_MAP)
+      .filter(([k]) => saved[k])
+      .map(([k,v]) => `*${v}* — ${saved[k]}`).join("\n\n");
+    await send(chatId, toTgMarkdown(`📅 *План на неделю*\n\n${lines}\n\nИзменить: открой Mini App → «📅 План»`));
+    return;
+  }
+
   if (text === "/stats" || text === "/статистика") {
     const mid = await sendWithStop(chatId, "📊 Анализирую посты канала...");
     const posts = await getPostsForStats();
