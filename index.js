@@ -432,7 +432,7 @@ async function handle(msg) {
 Формат: только список тем с H1-заголовком, одна строка каждая. Без вступлений.`
     );
     await editMsg(chatId, mid, "✅ Готово", true);
-    await sendResult(chatId, toTgMarkdown(\`🔍 Темы для Дзен-статей:\n\n\${ideas}\n\nВыбери тему → напиши \"статья дзен: [название]\" → получишь полную статью\`));
+    await sendResult(chatId, toTgMarkdown("🔍 Темы для Дзен-статей:\n\n" + ideas + "\n\nВыбери тему → напиши «статья дзен: [название]» → получишь полную статью"));
     return;
   }
 
