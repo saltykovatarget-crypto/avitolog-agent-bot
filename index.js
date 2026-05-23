@@ -205,9 +205,7 @@ async function claude(system, content, history = []) {
   return msg.content[0].text;
 }
 
-const PLAT_SYSTEM = "Ты — SMM-редактор. Адаптируй пост под три платформы. Без вступлений.";
-const platPrompt  = post =>
-  `ПОСТ:\n${post}\n\nВерни три блока:\n\nTELEGRAM\n[хук 2 строки, эмодзи ➡️📌⚡️💜, #авито #авитолог, подпись: 💜 AI Авитолог | Валерия]\n\nВКОНТАКТЕ\n[10-20 строк, #авито #авитопродвижение]\n\nТЕНЧАТ\n[деловой тон, без хэштегов, 15-25 строк]`;
+// Multi-platform адаптация отключена — пишем только под Telegram (один сильный пост > трёх средних)
 
 // ─── История (с Redis) ────────────────────────────────────────────────────────
 async function getHistory(id) {
@@ -584,10 +582,7 @@ ${top.map(p => `- "${p.preview.slice(0,60)}" — ${p.views||0} просм`).join
       result = await claude(sysPrompt, userMsg, i === 0 ? history : []);
     }
     if (stopFlags.has(chatId)) { await editMsg(chatId, mid, "🛑 Остановлено", true); return; }
-    if (route.platforms) {
-      await editMsg(chatId, mid, "✅ → 📱 Адаптирую под платформы...");
-      result = await claude(PLAT_SYSTEM, platPrompt(result));
-    }
+    // Multi-platform адаптация удалена — всегда отдаём один Telegram-пост.
     await appendHistory(chatId, text, result);
     lastResults.set(String(chatId), { text: result, request: text });
     await bot.deleteMessage(chatId, mid).catch(() => {});
