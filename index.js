@@ -9,6 +9,7 @@ const AGENTS = {
   smm:                require("./agents/smm"),
   editor:             require("./agents/editor"),
   scriptwriter:       require("./agents/scriptwriter"),
+  "reels-pro":        require("./agents/reels-pro"),
   analyst:            require("./agents/analyst"),
   sales:              require("./agents/sales"),
   seo:                require("./agents/seo"),
