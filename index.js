@@ -38,13 +38,14 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 console.log("🤖 Bot started. Allowed:", ALLOWED_IDS);
 
-// Меню команд / в Telegram — только 5 ключевых
+// Меню команд / в Telegram — короткое, основная работа через Mini App
 bot.setMyCommands([
-  { command: "start", description: "🏠 Начать" },
-  { command: "ideas", description: "💡 Мои идеи" },
-  { command: "team",  description: "👥 Команда (18 агентов)" },
-  { command: "new",   description: "🆕 Очистить чат" },
-  { command: "stop",  description: "🛑 Остановить генерацию" },
+  { command: "start",  description: "🏠 Начать" },
+  { command: "agents", description: "🤖 Выбрать агента (Mini App)" },
+  { command: "unpin",  description: "🔓 Отключить агента" },
+  { command: "ideas",  description: "💡 Мои идеи" },
+  { command: "new",    description: "🆕 Новый чат" },
+  { command: "stop",   description: "🛑 Остановить" },
 ]).catch(() => {});
 
 // ─── Redis (Upstash) — постоянное хранилище ───────────────────────────────────
@@ -79,23 +80,21 @@ const stopFlags   = new Set();
 const lastResults = new Map();
 
 // ─── Клавиатуры ───────────────────────────────────────────────────────────────
+// Минимум — основная навигация теперь в Mini App, бот = рабочая зона.
 const MAIN_KB = {
   keyboard: [
-    [{ text: "✍️ Пост" },        { text: "🎬 Reels" }],
-    [{ text: "📋 Кейс" },         { text: "💡 Идеи" }],
-    [{ text: "🗓 План недели" },  { text: "🆕 Новый чат" }],
+    [{ text: "🤖 Сменить агента" }, { text: "🔓 Отключить" }],
+    [{ text: "💡 Идеи" },           { text: "🆕 Новый чат" }],
   ],
   resize_keyboard: true,
   persistent: true,
 };
 
 const BUTTON_MAP = {
-  "✍️ Пост":         "напиши пост",
-  "🎬 Reels":         "сценарий reels",
-  "📋 Кейс":          "напиши кейс",
-  "💡 Идеи":         "/ideas",
-  "🗓 План недели":   "план на неделю",
-  "🆕 Новый чат":    "/new",
+  "🤖 Сменить агента": "/agents",
+  "🔓 Отключить":      "/unpin",
+  "💡 Идеи":           "/ideas",
+  "🆕 Новый чат":     "/new",
 };
 
 function postActionsKb(chatId) {
@@ -366,15 +365,17 @@ async function transcribeVoice(fileId) {
 // ─── Тексты ───────────────────────────────────────────────────────────────────
 const START = `Привет! Я — твоя AI-команда маркетинга 👋
 
-Нажми кнопку или просто напиши:
-✍️ «напиши пост про кейс с юристами»
-🎬 «сценарий reels про CTR»
-📋 «хочу кейс по [нише]»
-💡 «запомни: [идея]»
+*Как со мной работать:*
+1️⃣ Жми кнопку «Открыть» сверху → Mini App
+2️⃣ Во вкладке «Агенты» — тыкаешь нужного (SMM, Reels Pro, SEO и т.д.)
+3️⃣ Возвращаешься в этот чат — агент уже подключён
+4️⃣ Пиши задачу — он отвечает в своей роли
 
-🎙 Голосовые тоже понимаю!
+Без выбора агента — отвечу как чат-маркетолог (определю роль по запросу).
 
-/team — вся команда · /new — новый чат`;
+🎙 Голосовые понимаю.
+
+/agents — выбор агента · /unpin — отключить · /new — новый чат`;
 
 const TEAM = `Команда (18 специалистов):
 ✍️ SMM · 📝 Редактор · 🎬 Сценарист · 📊 Аналитик
@@ -406,13 +407,51 @@ async function handle(msg) {
 
   if (!text) return;
 
+  // Deep-link из Mini App: /start agent_<id> — закрепляет агента за чатом
+  const startAgentMatch = text.match(/^\/start\s+agent_([\w-]+)/);
+  if (startAgentMatch) {
+    const agentId = startAgentMatch[1];
+    const agent = AGENTS[agentId];
+    if (!agent) {
+      await send(chatId, `⚠️ Агент "${agentId}" не найден. Открой /agents.`);
+      return;
+    }
+    await rSet(`pinned:${chatId}`, agentId, 86400 * 7);
+    await clearHistory(chatId);
+    await send(chatId,
+      `${agent.emoji} *${agent.name}* подключён\n\n` +
+      `Пиши задачу — отвечаю как ${agent.name}.\n` +
+      `Сменить агента — открой Mini App кнопкой «Открыть».\n` +
+      `Отключить — /unpin или /new.`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+
   if (text === "/start")  {
+    await rDel(`pinned:${chatId}`);
     await clearHistory(chatId);
     await bot.sendMessage(chatId, START, { reply_markup: MAIN_KB }).catch(() => {});
     return;
   }
   if (text === "/team")   { await send(chatId, TEAM); return; }
-  if (text === "/new")    { await clearHistory(chatId); await send(chatId, "🆕 История очищена."); return; }
+  if (text === "/new")    {
+    await rDel(`pinned:${chatId}`);
+    await clearHistory(chatId);
+    await send(chatId, "🆕 История очищена, агент сброшен.");
+    return;
+  }
+  if (text === "/unpin" || text === "/отключить") {
+    const wasPinned = await rGet(`pinned:${chatId}`);
+    await rDel(`pinned:${chatId}`);
+    if (wasPinned) await send(chatId, `🔓 Агент отключён. Теперь я сам выбираю кто отвечает по смыслу запроса.`);
+    else           await send(chatId, `Агент не был закреплён.`);
+    return;
+  }
+  if (text === "/agents" || text === "/агенты") {
+    await send(chatId, `🤖 *Выбор агента — в Mini App*\n\nЖми кнопку «Открыть» сверху → вкладка «Агенты» → тыкаешь нужного → возвращаешься сюда уже с подключённым специалистом.`, { parse_mode: "Markdown" });
+    return;
+  }
 
   if (text === "/dzen" || text === "/дзен") {
     const mid = await sendWithStop(chatId, "🔍 Подбираю темы для Дзен...");
@@ -554,7 +593,11 @@ ${top.map(p => `- "${p.preview.slice(0,60)}" — ${p.views||0} просм`).join
 
   // ── Агентная цепочка ────────────────────────────────────────────────────────
   stopFlags.delete(chatId);
-  const route   = detectRoute(text);
+  // Если есть закреплённый агент — обходим router, идём сразу к нему
+  const pinnedId = await rGet(`pinned:${chatId}`);
+  const route   = (pinnedId && AGENTS[pinnedId])
+    ? { agents: [pinnedId], platforms: false, label: `${AGENTS[pinnedId].name} (закреплён)` }
+    : detectRoute(text);
   const first   = AGENTS[route.agents[0]];
   const history = await getHistory(chatId);
   const mid     = await sendWithStop(chatId, `${first.emoji} ${first.name} — ${route.label}...`);
